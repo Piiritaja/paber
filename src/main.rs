@@ -1,11 +1,11 @@
 mod state;
 mod client;
 
-use std::env;
+use std::{env, process::exit};
 
 use wayland_client::Connection;
 
-use crate::client::{build_state, build_surface, draw_plain};
+use crate::client::{build_state, build_surface, draw_plain, set_img};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -25,7 +25,11 @@ fn main() {
 
     println!("Configuration complete. Ready to draw background");
 
-    draw_plain(&state, &qh, &surface);
+    match conf.mode {
+        Mode::PLAIN => draw_plain(&state, &qh, &surface),
+        Mode::IMAGE => set_img(&state, &qh, &surface, &conf.image_arg),
+        Mode::GENERATED => exit(1),
+    }
 
     println!("Wallpaper set! Press Ctrl+C to exit");
 
@@ -34,8 +38,13 @@ fn main() {
     }
 }
 
+enum Mode {
+    PLAIN,IMAGE,GENERATED
+}
+
 struct Config {
-    image_path: String,
+    image_arg: String,
+    mode: Mode,
 }
 
 impl Config {
@@ -43,8 +52,15 @@ impl Config {
         if args.len() < 2 {
             return Err("Insufficient arguments provided");
         }
-        let image_path = args[1].clone();
-        let conf = Config { image_path, };
+        let mode_pos = args.iter().position(|x| x == "--plain");
+        let mut img_arg_pos = 1;
+
+        let mut mode = Mode::IMAGE;
+        if mode_pos.is_some() {
+            mode = Mode::PLAIN;
+        }
+        let image_arg = args[img_arg_pos].clone();
+        let conf = Config { image_arg, mode };
         Ok(conf)
     }
 }

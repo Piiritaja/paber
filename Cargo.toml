@@ -7,3 +7,4 @@ edition = "2024"
 wayland-client = "0.31"
 wayland-protocols-wlr = { version = "0.3.9", features = ["client"] }
 nix = { version = "0.27", features = ["fs", "mman"] }
+image = "0.24"
