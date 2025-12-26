@@ -24,7 +24,6 @@ pub fn build_state(conn: &Connection, event_queue: &mut EventQueue<AppState>) ->
     let mut state = AppState {
         compositor: None,
         layer_shell: None,
-        surface: None,
         shm: None,
         width: 0,
         height: 0,

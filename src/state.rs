@@ -5,7 +5,6 @@ use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_l
 pub struct AppState {
     pub compositor: Option<wl_compositor::WlCompositor>,
     pub layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
-    pub surface: Option<wl_surface::WlSurface>,
     pub shm: Option<wl_shm::WlShm>, // Shared memory
     pub width: u32,
     pub height: u32,
