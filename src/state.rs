@@ -1,4 +1,4 @@
-use wayland_client::{Connection, Dispatch, QueueHandle, protocol::{wl_buffer, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface}};
+use wayland_client::{Connection, Dispatch, QueueHandle, protocol::{wl_buffer, wl_compositor, wl_output, wl_registry, wl_shm, wl_shm_pool, wl_surface}};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 
@@ -6,6 +6,28 @@ pub struct AppState {
     pub compositor: Option<wl_compositor::WlCompositor>,
     pub layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
     pub shm: Option<wl_shm::WlShm>, // Shared memory
+
+    // Monitors
+    pub outputs: Vec<wl_output::WlOutput>,
+
+    pub wallpapers: Vec<Wallpaper>,
+}
+
+impl AppState {
+    pub fn new() -> Self {
+        AppState {
+            compositor: None,
+            layer_shell: None,
+            shm: None,
+            outputs: Vec::new(),
+            wallpapers: Vec::new(),
+        }
+    }
+}
+
+pub struct Wallpaper {
+    pub surface: wl_surface::WlSurface,
+    pub layer_surface: zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
     pub width: u32,
     pub height: u32,
     pub configured: bool,
@@ -74,15 +96,18 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for AppState {
             _conn: &Connection,
             _qhandle: &QueueHandle<Self>,
         ) {
-        if let zwlr_layer_surface_v1::Event::Configure { serial, width, height } = event {
-            println!("Surface size is {}x{}", width, height);
-            state.width = width;
-            state.height = height; 
-            state.configured = true;
+            if let zwlr_layer_surface_v1::Event::Configure { serial, width, height } = event {
+                proxy.ack_configure(serial);
 
-            proxy.ack_configure(serial);
+                // Find which wallpaper this event belongs to and update it
+                if let Some(wallpaper) = state.wallpapers.iter_mut().find(|w| w.layer_surface == *proxy) {
+                    wallpaper.width = width;
+                    wallpaper.height = height;
+                    wallpaper.configured = true;
+                    println!("Monitor configured: {}x{}", width, height);
+                }
+            }
         }
-    }
 }
 
 impl Dispatch<wl_shm::WlShm, ()> for AppState {
@@ -108,6 +133,11 @@ impl Dispatch<wl_shm_pool::WlShmPool, ()> for AppState {
             _qhandle: &QueueHandle<Self>,
         ) {
         
+    }
+}
+
+impl Dispatch<wl_output::WlOutput, ()> for AppState {
+    fn event(_: &mut Self, _: &wl_output::WlOutput, _: wl_output::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
     }
 }
 
@@ -143,7 +173,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
                     state.layer_shell = Some(layer_shell);
                 },
                 "wl_shm" => { state.shm = Some(proxy.bind(name, 1, qhandle, ())); },
-                _ => {}
+                "wl_output" => {
+                    let output = proxy.bind::<wl_output::WlOutput, _, _>(name, 4, qhandle, ());
+                    state.outputs.push(output);
+                },
+                _ => {},
             }
         }
         

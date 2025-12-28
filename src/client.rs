@@ -3,14 +3,13 @@ use std::num::NonZeroUsize;
 
 use image::imageops::FilterType;
 use nix::sys::mman::{mmap, MapFlags, ProtFlags};
-use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_client::{EventQueue, QueueHandle};
 use std::ffi::CStr;
 use wayland_client::{Connection, protocol::wl_shm};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 use nix::{sys::{memfd::{MemFdCreateFlag, memfd_create}}, unistd::ftruncate}; 
 
-use crate::state::AppState;
+use crate::state::{AppState};
 
 pub fn build_state(conn: &Connection, event_queue: &mut EventQueue<AppState>) -> AppState {
     let qh = event_queue.handle();
@@ -21,20 +20,13 @@ pub fn build_state(conn: &Connection, event_queue: &mut EventQueue<AppState>) ->
 
     println!("Connected to Wayland! Asking for globals...");
 
-    let mut state = AppState {
-        compositor: None,
-        layer_shell: None,
-        shm: None,
-        width: 0,
-        height: 0,
-        configured: false,
-    };
+    let mut state = AppState::new();
 
     event_queue.roundtrip(&mut state).unwrap();
     state
 }
 
-pub fn build_surface(state: &AppState, qh: &QueueHandle<AppState>) -> WlSurface {
+pub fn build_surface(state: &mut AppState, qh: &QueueHandle<AppState>) {
     if state.layer_shell.is_none() {
         eprintln!("Error: This compositor does not support 'wlr_layer_shell_v1'.");
         eprintln!("Are you running Hyprland, Sway, or another wlroots-based compositor?");
@@ -47,36 +39,45 @@ pub fn build_surface(state: &AppState, qh: &QueueHandle<AppState>) -> WlSurface 
     let compositor = state.compositor.as_ref().expect("Compositor not found");
     let layer_shell = state.layer_shell.as_ref().expect("Layer Shell not found");
 
-    // Create plain surface
-    let surface = compositor.create_surface(&qh, ());
+    let outputs = state.outputs.clone(); // Avoid borrowing issues while mutating state
 
-    // Assign Background surface role
-    let layer_surface = layer_shell.get_layer_surface(&surface,
-        None, // Default monitor
-        zwlr_layer_shell_v1::Layer::Background,
-        "paber".to_string(),
-        &qh,
-        ());
+    for output in outputs {
+        let surface = compositor.create_surface(qh, ());
 
-    // Anchor to all 4 edges
-    layer_surface.set_anchor(
-        zwlr_layer_surface_v1::Anchor::Top |
-        zwlr_layer_surface_v1::Anchor::Bottom |
-        zwlr_layer_surface_v1::Anchor::Left |
-        zwlr_layer_surface_v1::Anchor::Right
-    );
+        let layer_surface = layer_shell.get_layer_surface(&surface,
+            Some(&output), 
+            zwlr_layer_shell_v1::Layer::Background,
+            "paber".to_string(),
+            &qh,
+            ());
 
-    // don't rearrange other windows
-    layer_surface.set_exclusive_zone(-1);
+        // Anchor to all 4 edges
+        layer_surface.set_anchor(
+            zwlr_layer_surface_v1::Anchor::Top |
+            zwlr_layer_surface_v1::Anchor::Bottom |
+            zwlr_layer_surface_v1::Anchor::Left |
+            zwlr_layer_surface_v1::Anchor::Right
+        );
 
-    surface.commit();
+        // don't rearrange other windows
+        layer_surface.set_exclusive_zone(-1);
 
-    surface
+        surface.commit();
+        state.wallpapers.push(crate::state::Wallpaper {
+            surface,
+            layer_surface,
+            width: 0, // Will be updated by configure event
+            height: 0,
+            configured: false,
+        });
+    }
+
 }
 
-pub fn draw_plain(state: &AppState, qh: &QueueHandle<AppState>, surface: &WlSurface) {
+pub fn draw_plain(state: &AppState, qh: &QueueHandle<AppState>, wp_index: usize) {
+    let wallpaper = &state.wallpapers[wp_index];
     let shm = state.shm.as_ref().unwrap();
-    let size = (state.width * state.height * 4) as usize;
+    let size = (wallpaper.width * wallpaper.height * 4) as usize;
 
     let length = NonZeroUsize::new(size).expect("Window size cannot be zero!");
 
@@ -99,7 +100,7 @@ pub fn draw_plain(state: &AppState, qh: &QueueHandle<AppState>, surface: &WlSurf
     };
 
     let canvas = unsafe {
-        std::slice::from_raw_parts_mut(ptr as *mut u32, (state.width * state.height) as usize)
+        std::slice::from_raw_parts_mut(ptr as *mut u32, (wallpaper.width * wallpaper.height) as usize)
     };
 
     for pixel in canvas.iter_mut() {
@@ -110,24 +111,25 @@ pub fn draw_plain(state: &AppState, qh: &QueueHandle<AppState>, surface: &WlSurf
 
     let buffer = pool.create_buffer(
         0, 
-        state.width as i32, 
-        state.height as i32, 
-        (state.width * 4) as i32, 
+        wallpaper.width as i32, 
+        wallpaper.height as i32, 
+        (wallpaper.width * 4) as i32, 
         wl_shm::Format::Argb8888, 
         &qh, 
         ()
     );
 
-    surface.attach(Some(&buffer), 0, 0);
+    wallpaper.surface.attach(Some(&buffer), 0, 0);
 
-    surface.damage(0, 0, state.width as i32, state.height as i32);
+    wallpaper.surface.damage(0, 0, wallpaper.width as i32, wallpaper.height as i32);
 
-    surface.commit();
+    wallpaper.surface.commit();
 }
 
-pub fn set_img(state: &AppState, qh: &QueueHandle<AppState>, surface: &WlSurface, image_path: &str) {
+pub fn set_img(state: &AppState, qh: &QueueHandle<AppState>, image_path: &str, wp_index: usize) {
+    let wallpaper = &state.wallpapers[wp_index];
     let shm = state.shm.as_ref().unwrap();
-    let size = (state.width * state.height * 4) as usize;
+    let size = (wallpaper.width * wallpaper.height * 4) as usize;
 
     let length = NonZeroUsize::new(size).expect("Window size cannot be zero!");
 
@@ -150,12 +152,12 @@ pub fn set_img(state: &AppState, qh: &QueueHandle<AppState>, surface: &WlSurface
     };
 
     let canvas = unsafe {
-        std::slice::from_raw_parts_mut(ptr as *mut u32, (state.width * state.height) as usize)
+        std::slice::from_raw_parts_mut(ptr as *mut u32, (wallpaper.width * wallpaper.height) as usize)
     };
 
     println!("Loading image...");
     let img = image::open(image_path).expect("Failed to open image file");
-    let resized_img = img.resize_exact(state.width, state.height, FilterType::Triangle);
+    let resized_img = img.resize_exact(wallpaper.width, wallpaper.height, FilterType::Triangle);
 
     let rgba_buffer = resized_img.to_rgba8();
 
@@ -177,17 +179,17 @@ pub fn set_img(state: &AppState, qh: &QueueHandle<AppState>, surface: &WlSurface
 
     let buffer = pool.create_buffer(
         0, 
-        state.width as i32, 
-        state.height as i32, 
-        (state.width * 4) as i32, 
+        wallpaper.width as i32, 
+        wallpaper.height as i32, 
+        (wallpaper.width * 4) as i32, 
         wl_shm::Format::Argb8888, 
         &qh, 
         ()
     );
 
-    surface.attach(Some(&buffer), 0, 0);
+    wallpaper.surface.attach(Some(&buffer), 0, 0);
 
-    surface.damage(0, 0, state.width as i32, state.height as i32);
+    wallpaper.surface.damage(0, 0, wallpaper.width as i32, wallpaper.height as i32);
 
-    surface.commit();
+    wallpaper.surface.commit();
 }

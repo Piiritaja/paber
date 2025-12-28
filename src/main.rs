@@ -15,21 +15,27 @@ fn main() {
     let mut event_queue = conn.new_event_queue();
     let qh = event_queue.handle();
     let mut state = build_state(&conn, &mut event_queue);
-    let surface = build_surface(&state, &qh);
+    build_surface(&mut state, &qh);
 
     println!("Surface created! Waiting for configuration...");
 
-    while !state.configured {
+    loop {
         event_queue.blocking_dispatch(&mut state).unwrap();
+
+        let all_ready = state.wallpapers.iter().all(|w| w.configured);
+        if all_ready {
+            break;
+        }
     }
 
     println!("Configuration complete. Ready to draw background");
+    let m_index = 1;
 
     match mode {
-        Mode::PLAIN => draw_plain(&state, &qh, &surface),
-        Mode::IMAGE(image) => set_img(&state, &qh, &surface, &image),
+        Mode::PLAIN => draw_plain(&state, &qh, m_index),
+        Mode::IMAGE(image) => set_img(&state, &qh, &image, m_index),
         Mode::GENERATED(prompt) => exit(1),
-        Mode::MULTIPLE(path) => cycle_images(&path, &mut state, &qh, &surface, &mut event_queue, &conn),
+        Mode::MULTIPLE(path) => cycle_images(&path, &mut state, &qh, &mut event_queue, &conn, m_index),
     }
 
     println!("Wallpaper set! Press Ctrl+C to exit");
@@ -59,23 +65,19 @@ fn parse_args(args: Vec<String>) -> Result<Mode, &'static str> {
 fn get_images_from_dir(path: &str) -> Vec<PathBuf> {
     let mut images = Vec::new();
     
-    // Attempt to read the directory
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries {
             if let Ok(entry) = entry {
                 let path = entry.path();
                 
-                // 1. Check if it is a file (not a directory)
                 if path.is_file() {
-                    // 2. Check the extension
                     if let Some(extension) = path.extension() {
-                        // Convert extension to lowercase string for comparison
                         if let Some(ext_str) = extension.to_str() {
                             match ext_str.to_lowercase().as_str() {
                                 "jpg" | "jpeg" | "png" | "webp" | "gif" | "bmp" => {
                                     images.push(path);
                                 }
-                                _ => {} // Ignore other files
+                                _ => {}
                             }
                         }
                     }
@@ -87,7 +89,7 @@ fn get_images_from_dir(path: &str) -> Vec<PathBuf> {
     images
 }
 
-fn cycle_images(path: &str, state: &mut AppState, qh: &QueueHandle<AppState>, surface: &WlSurface, event_queue: &mut EventQueue<AppState>, conn: &Connection) {
+fn cycle_images(path: &str, state: &mut AppState, qh: &QueueHandle<AppState>, event_queue: &mut EventQueue<AppState>, conn: &Connection, m_index: usize) {
     let images = get_images_from_dir(path);
     let mut curr_img_index = 0;
     let mut next_switch_time = Instant::now();
@@ -97,7 +99,7 @@ fn cycle_images(path: &str, state: &mut AppState, qh: &QueueHandle<AppState>, su
        if now >= next_switch_time {
            let img_path = &images[curr_img_index].to_string_lossy().into_owned();
            println!("Switching to {img_path}");
-           set_img(&state, &qh, &surface, &img_path);
+           set_img(&state, &qh, &img_path, m_index);
            curr_img_index = (curr_img_index + 1) % images.len();
            next_switch_time = now + interval;
            let _ = conn.flush();
