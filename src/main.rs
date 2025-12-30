@@ -1,13 +1,15 @@
 mod state;
 mod client;
+mod gai;
 
+use anyhow::Result;
 use clap::Parser;
 
 use std::{env, fs, path::PathBuf, process::exit, time::{Duration, Instant}, usize};
 
 use wayland_client::{Connection, EventQueue, QueueHandle, protocol::wl_surface::WlSurface};
 
-use crate::{client::{build_state, build_surface, draw_plain, set_img}, state::AppState};
+use crate::{client::{build_state, build_surface, draw_plain, set_img}, gai::WallpaperTool, state::AppState};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -63,7 +65,7 @@ fn main() {
     match &mode {
         Mode::PLAIN => monitors_to_apply.iter().for_each(|m_index| draw_plain(&state, &qh, m_index.to_owned())),
         Mode::IMAGE(image) => monitors_to_apply.iter().for_each(|m_index| set_img(&state, &qh, &image, m_index.to_owned())),
-        Mode::GENERATED(prompt) => exit(1),
+        Mode::GENERATED(prompt) => set_generated_img(prompt).unwrap(),
         Mode::CYCLE(path, interval) => cycle_images(&path, interval, &mut state, &qh, &mut event_queue, &conn, monitors_to_apply),
     }
 
@@ -72,6 +74,12 @@ fn main() {
     loop {
         event_queue.blocking_dispatch(&mut state).unwrap();
     }
+}
+
+fn set_generated_img(prompt: &str) -> Result<()> {
+    let wt = WallpaperTool::new()?;
+    wt.generate_online(prompt, "./generated.png")?;
+    Ok(())
 }
 
 fn parse_monitors(args: &Args) -> Vec<usize> {
