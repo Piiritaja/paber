@@ -3,7 +3,7 @@ mod client;
 
 use clap::Parser;
 
-use std::{env, fs, path::PathBuf, process::exit, time::{Duration, Instant}};
+use std::{env, fs, path::PathBuf, process::exit, time::{Duration, Instant}, usize};
 
 use wayland_client::{Connection, EventQueue, QueueHandle, protocol::wl_surface::WlSurface};
 
@@ -39,7 +39,7 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    let mode = determine_mode(args).expect("Expected mode");
+    let mode = determine_mode(&args).expect("Expected mode");
     let conn = Connection::connect_to_env().expect("Failed to connect to Wayland");
 
     let mut event_queue = conn.new_event_queue();
@@ -58,13 +58,13 @@ fn main() {
     }
 
     println!("Configuration complete. Ready to draw background");
-    let m_index = 0;
+    let monitors_to_apply = parse_monitors(&args);
 
-    match mode {
-        Mode::PLAIN => draw_plain(&state, &qh, m_index),
-        Mode::IMAGE(image) => set_img(&state, &qh, &image, m_index),
+    match &mode {
+        Mode::PLAIN => monitors_to_apply.iter().for_each(|m_index| draw_plain(&state, &qh, m_index.to_owned())),
+        Mode::IMAGE(image) => monitors_to_apply.iter().for_each(|m_index| set_img(&state, &qh, &image, m_index.to_owned())),
         Mode::GENERATED(prompt) => exit(1),
-        Mode::CYCLE(path, interval) => cycle_images(&path, interval, &mut state, &qh, &mut event_queue, &conn, m_index),
+        Mode::CYCLE(path, interval) => cycle_images(&path, interval, &mut state, &qh, &mut event_queue, &conn, monitors_to_apply),
     }
 
     println!("Wallpaper set! Press Ctrl+C to exit");
@@ -74,28 +74,35 @@ fn main() {
     }
 }
 
+fn parse_monitors(args: &Args) -> Vec<usize> {
+    if args.monitors.is_some() {
+        return args.monitors.clone().unwrap().split(",").map(|x| x.parse().expect("Not a number!")).collect();
+    }
+    vec![0]
+}
+
 enum Mode {
     PLAIN,IMAGE(String),GENERATED(String),CYCLE(String, Duration)
 }
 
-fn determine_mode(args: Args) -> Result<Mode, &'static str> {
+fn determine_mode(args: &Args) -> Result<Mode, String> {
     if args.plain.is_some() {
         return Ok(Mode::PLAIN);
     }
     if args.image.is_some() {
-        return Ok(Mode::IMAGE(args.image.unwrap()));
+        return Ok(Mode::IMAGE(args.image.clone().unwrap()));
     }
     if args.cycle.is_some() {
         let mut interval = 60 * 60; // Every hour
         if args.interval.is_some() {
            interval = args.interval.unwrap(); 
         }
-        return Ok(Mode::CYCLE(args.cycle.unwrap(), Duration::new(interval, 0)));
+        return Ok(Mode::CYCLE(args.cycle.clone().unwrap(), Duration::new(interval, 0)));
     }
     if args.generated.is_some() {
-        return Ok(Mode::GENERATED(args.generated.unwrap()));
+        return Ok(Mode::GENERATED(args.generated.clone().unwrap()));
     }
-    Err("no mode found")
+    Err("no mode found".to_string())
 }
 
 fn get_images_from_dir(path: &str) -> Vec<PathBuf> {
@@ -125,7 +132,7 @@ fn get_images_from_dir(path: &str) -> Vec<PathBuf> {
     images
 }
 
-fn cycle_images(path: &str, interval: Duration, state: &mut AppState, qh: &QueueHandle<AppState>, event_queue: &mut EventQueue<AppState>, conn: &Connection, m_index: usize) {
+fn cycle_images(path: &str, interval: &Duration, state: &mut AppState, qh: &QueueHandle<AppState>, event_queue: &mut EventQueue<AppState>, conn: &Connection, monitors: Vec<usize>) {
     let images = get_images_from_dir(path);
     let mut curr_img_index = 0;
     let mut next_switch_time = Instant::now();
@@ -134,9 +141,9 @@ fn cycle_images(path: &str, interval: Duration, state: &mut AppState, qh: &Queue
        if now >= next_switch_time {
            let img_path = &images[curr_img_index].to_string_lossy().into_owned();
            println!("Switching to {img_path}");
-           set_img(&state, &qh, &img_path, m_index);
+           monitors.iter().for_each(|m_index| set_img(&state, &qh, &img_path, m_index.to_owned()));
            curr_img_index = (curr_img_index + 1) % images.len();
-           next_switch_time = now + interval;
+           next_switch_time = now + interval.to_owned();
            let _ = conn.flush();
        }
         event_queue.dispatch_pending(state).unwrap();
