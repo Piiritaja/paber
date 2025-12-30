@@ -1,15 +1,45 @@
 mod state;
 mod client;
 
+use clap::Parser;
+
 use std::{env, fs, path::PathBuf, process::exit, time::{Duration, Instant}};
 
 use wayland_client::{Connection, EventQueue, QueueHandle, protocol::wl_surface::WlSurface};
 
 use crate::{client::{build_state, build_surface, draw_plain, set_img}, state::AppState};
 
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Sets a plain wallpaper with a specified hex value
+    #[arg(long)]
+    plain: Option<String>,
+
+    /// Sets the specified image as a wallpaper
+    #[arg(long)]
+    image: Option<String>,
+
+    /// Generates an image with a specified promt and sets it as a wallpaper
+    #[arg(long)]
+    generated: Option<String>,
+
+    /// Cycles through images in a specified directory
+    #[arg(long)]
+    cycle: Option<String>,
+
+    /// Monitors to apply the wallpaper to
+    #[arg(short, long)]
+    monitors: Option<String>,
+
+    /// Interval for the cycle mode in seconds
+    #[arg(short, long)]
+    interval: Option<u64>,
+}
+
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    let mode = parse_args(args).expect("Expected mode");
+    let args = Args::parse();
+    let mode = determine_mode(args).expect("Expected mode");
     let conn = Connection::connect_to_env().expect("Failed to connect to Wayland");
 
     let mut event_queue = conn.new_event_queue();
@@ -24,18 +54,17 @@ fn main() {
 
         let all_ready = state.wallpapers.iter().all(|w| w.configured);
         if all_ready {
-            break;
-        }
+            break; }
     }
 
     println!("Configuration complete. Ready to draw background");
-    let m_index = 1;
+    let m_index = 0;
 
     match mode {
         Mode::PLAIN => draw_plain(&state, &qh, m_index),
         Mode::IMAGE(image) => set_img(&state, &qh, &image, m_index),
         Mode::GENERATED(prompt) => exit(1),
-        Mode::MULTIPLE(path) => cycle_images(&path, &mut state, &qh, &mut event_queue, &conn, m_index),
+        Mode::CYCLE(path, interval) => cycle_images(&path, interval, &mut state, &qh, &mut event_queue, &conn, m_index),
     }
 
     println!("Wallpaper set! Press Ctrl+C to exit");
@@ -46,20 +75,27 @@ fn main() {
 }
 
 enum Mode {
-    PLAIN,IMAGE(String),GENERATED(String),MULTIPLE(String)
+    PLAIN,IMAGE(String),GENERATED(String),CYCLE(String, Duration)
 }
 
-fn parse_args(args: Vec<String>) -> Result<Mode, &'static str> {
-    if args.len() < 2 {
-        return Err("Insufficient arguments provided");
+fn determine_mode(args: Args) -> Result<Mode, &'static str> {
+    if args.plain.is_some() {
+        return Ok(Mode::PLAIN);
     }
-    if args.iter().any(|x| x == "--plain") {
-        return Ok(Mode::PLAIN)
+    if args.image.is_some() {
+        return Ok(Mode::IMAGE(args.image.unwrap()));
     }
-    if args.iter().any(|x| x == "--cycle") {
-        return Ok(Mode::MULTIPLE(args[1].clone()))
+    if args.cycle.is_some() {
+        let mut interval = 60 * 60; // Every hour
+        if args.interval.is_some() {
+           interval = args.interval.unwrap(); 
+        }
+        return Ok(Mode::CYCLE(args.cycle.unwrap(), Duration::new(interval, 0)));
     }
-    Ok(Mode::IMAGE(args[1].clone()))
+    if args.generated.is_some() {
+        return Ok(Mode::GENERATED(args.generated.unwrap()));
+    }
+    Err("no mode found")
 }
 
 fn get_images_from_dir(path: &str) -> Vec<PathBuf> {
@@ -89,11 +125,10 @@ fn get_images_from_dir(path: &str) -> Vec<PathBuf> {
     images
 }
 
-fn cycle_images(path: &str, state: &mut AppState, qh: &QueueHandle<AppState>, event_queue: &mut EventQueue<AppState>, conn: &Connection, m_index: usize) {
+fn cycle_images(path: &str, interval: Duration, state: &mut AppState, qh: &QueueHandle<AppState>, event_queue: &mut EventQueue<AppState>, conn: &Connection, m_index: usize) {
     let images = get_images_from_dir(path);
     let mut curr_img_index = 0;
     let mut next_switch_time = Instant::now();
-    let interval = Duration::from_secs(5);
     loop {
        let now = Instant::now(); 
        if now >= next_switch_time {
