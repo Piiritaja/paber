@@ -1,15 +1,17 @@
 mod state;
 mod client;
 mod gai;
+mod lai;
 
 use anyhow::Result;
+use chrono::{Local, Timelike};
 use clap::Parser;
 
-use std::{env, fs, path::PathBuf, process::exit, time::{Duration, Instant}, usize};
+use std::{env, fs, path::{PathBuf, PrefixComponent}, process::exit, time::{Duration, Instant}, usize};
 
 use wayland_client::{Connection, EventQueue, QueueHandle, protocol::wl_surface::WlSurface};
 
-use crate::{client::{build_state, build_surface, draw_plain, set_img}, gai::WallpaperTool, state::AppState};
+use crate::{client::{build_state, build_surface, draw_plain, set_img}, gai::WallpaperTool, lai::generate_local, state::AppState};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -37,6 +39,10 @@ struct Args {
     /// Interval for the cycle mode in seconds
     #[arg(short, long)]
     interval: Option<u64>,
+
+    /// Sets the generated image mode to be local
+    #[arg(long)]
+    local: bool,
 }
 
 fn main() {
@@ -63,9 +69,9 @@ fn main() {
     let monitors_to_apply = parse_monitors(&args);
 
     match &mode {
-        Mode::PLAIN => monitors_to_apply.iter().for_each(|m_index| draw_plain(&state, &qh, m_index.to_owned())),
-        Mode::IMAGE(image) => monitors_to_apply.iter().for_each(|m_index| set_img(&state, &qh, &image, m_index.to_owned())),
-        Mode::GENERATED(prompt) => set_generated_img(prompt).unwrap(),
+        Mode::PLAIN => monitors_to_apply.iter().for_each(|m_index| draw_plain(&state, &qh, *m_index)),
+        Mode::IMAGE(image) => monitors_to_apply.iter().for_each(|m_index| set_img(&state, &qh, &image, *m_index)),
+        Mode::GENERATED(prompt) => set_generated_img(prompt, args.local, &state, &qh, monitors_to_apply).unwrap(),
         Mode::CYCLE(path, interval) => cycle_images(&path, interval, &mut state, &qh, &mut event_queue, &conn, monitors_to_apply),
     }
 
@@ -76,10 +82,40 @@ fn main() {
     }
 }
 
-fn set_generated_img(prompt: &str) -> Result<()> {
-    let wt = WallpaperTool::new()?;
-    wt.generate_online(prompt, "./generated.png")?;
+fn set_generated_img(prompt: &str, is_local: bool, state: &AppState, qh: &QueueHandle<AppState>, monitors: Vec<usize>) -> Result<()> {
+    let output = env::var("PABER_HOME").expect("PABER_HOME is not set") + "/generated.png";
+    let prompt = build_enriched_prompt(prompt);
+    if is_local {
+       generate_local(&prompt, &output)?;
+    } else {
+        let wt = WallpaperTool::new()?;
+        wt.generate_online(&prompt, &output)?;
+        println!("DOING ONLINE GENERATION");
+    }
+    monitors.iter().for_each(|m_index| set_img(state, qh, &output, *m_index));
     Ok(())
+}
+
+fn build_enriched_prompt(user_prompt: &str) -> String {
+    let user = env::var("USER").unwrap();
+
+    let now = Local::now();
+    let time_str = now.format("%H:%M").to_string();
+    let date_str = now.format("%A, %B %d, %Y").to_string();
+
+    let hour = now.hour();
+    let time_of_day = match hour {
+        5..=11 => "morning",
+        12..=17 => "afternoon",
+        18..=21 => "evening",
+        _ => "night",
+    };
+
+    format!(
+        "Context: The user is {}, it is a {} {} on {}. \
+         Request: {}",
+        user, time_of_day, time_str, date_str, user_prompt
+    )
 }
 
 fn parse_monitors(args: &Args) -> Vec<usize> {

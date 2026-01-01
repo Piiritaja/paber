@@ -69,7 +69,7 @@ impl WallpaperTool {
             if let Some(first) = candidates.first() {
                 for part in &first.content.parts {
                     if let Some(inline_data) = &part.inline_data {
-                        println!("✨ Image received! Decoding...");
+                        println!("Image received! Decoding...");
                         
                         let clean_b64 = inline_data.data.replace('\n', "");
                         let image_bytes = base64::decode(&clean_b64)?;
