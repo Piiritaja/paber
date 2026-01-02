@@ -150,7 +150,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for AppState {
             _conn: &Connection,
             qhandle: &QueueHandle<Self>,
         ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global { name, interface, version: _ } = event {
             match interface.as_str() {
                 "wl_compositor" => {
                     let compositor = proxy.bind::<wl_compositor::WlCompositor, _, _>(

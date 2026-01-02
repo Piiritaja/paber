@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use base64::prelude::*;
 use reqwest::blocking::Client; 
 use serde::Deserialize;
 use serde_json::json;
@@ -72,8 +73,8 @@ impl WallpaperTool {
                         println!("Image received! Decoding...");
                         
                         let clean_b64 = inline_data.data.replace('\n', "");
-                        let image_bytes = base64::decode(&clean_b64)?;
-
+                        let image_bytes = BASE64_STANDARD.decode(&clean_b64)
+                            .context("Failed to decode base64 image data")?;
                         fs::write(output_path, image_bytes)?;
                         println!("Image saved to {}", output_path);
                         return Ok(());

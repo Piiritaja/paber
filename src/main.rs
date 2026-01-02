@@ -8,9 +8,9 @@ use chrono::{Local, Timelike};
 use clap::Parser;
 use uuid::Uuid;
 
-use std::{env, fs, path::{PathBuf, PrefixComponent}, process::exit, time::{Duration, Instant}, usize};
+use std::{env, fs, path::{PathBuf}, time::{Duration, Instant}, usize};
 
-use wayland_client::{Connection, EventQueue, QueueHandle, protocol::wl_surface::WlSurface};
+use wayland_client::{Connection, EventQueue, QueueHandle};
 
 use crate::{client::{build_state, build_surface, draw_plain, set_img}, gai::WallpaperTool, lai::generate_local, state::AppState};
 
