@@ -6,6 +6,7 @@ mod lai;
 use anyhow::Result;
 use chrono::{Local, Timelike};
 use clap::Parser;
+use uuid::Uuid;
 
 use std::{env, fs, path::{PathBuf, PrefixComponent}, process::exit, time::{Duration, Instant}, usize};
 
@@ -26,7 +27,11 @@ struct Args {
 
     /// Generates an image with a specified promt and sets it as a wallpaper
     #[arg(long)]
-    generated: Option<String>,
+    generated: bool,
+
+    /// Prompt to generate the image with
+    #[arg(long)]
+    prompt: Option<String>,
 
     /// Cycles through images in a specified directory
     #[arg(long)]
@@ -83,24 +88,22 @@ fn main() {
 }
 
 fn set_generated_img(prompt: &str, is_local: bool, state: &AppState, qh: &QueueHandle<AppState>, monitors: Vec<usize>) -> Result<()> {
-    let output = env::var("PABER_HOME").expect("PABER_HOME is not set") + "/generated.png";
-    let prompt = build_enriched_prompt(prompt);
+    let output_suffix = Uuid::new_v4();
+    let output = env::var("PABER_HOME").expect("PABER_HOME is not set") + "generated/generated" + &output_suffix.to_string() + ".png";
     if is_local {
        generate_local(&prompt, &output)?;
     } else {
         let wt = WallpaperTool::new()?;
         wt.generate_online(&prompt, &output)?;
-        println!("DOING ONLINE GENERATION");
     }
     monitors.iter().for_each(|m_index| set_img(state, qh, &output, *m_index));
     Ok(())
 }
 
-fn build_enriched_prompt(user_prompt: &str) -> String {
+fn build_enriched_prompt(user_prompt: &Option<String>) -> String {
     let user = env::var("USER").unwrap();
 
     let now = Local::now();
-    let time_str = now.format("%H:%M").to_string();
     let date_str = now.format("%A, %B %d, %Y").to_string();
 
     let hour = now.hour();
@@ -111,11 +114,14 @@ fn build_enriched_prompt(user_prompt: &str) -> String {
         _ => "night",
     };
 
-    format!(
-        "Context: The user is {}, it is a {} {} on {}. \
-         Request: {}",
-        user, time_of_day, time_str, date_str, user_prompt
-    )
+    let context = format!(
+        "Generate a desktop wallpaper. Context: The user is {}, it is a {} on {}",
+        user, time_of_day, date_str
+    );
+    if user_prompt.is_some() {
+       return format!("{}. Request: {}", context, user_prompt.clone().unwrap());
+    }
+    context
 }
 
 fn parse_monitors(args: &Args) -> Vec<usize> {
@@ -143,8 +149,9 @@ fn determine_mode(args: &Args) -> Result<Mode, String> {
         }
         return Ok(Mode::CYCLE(args.cycle.clone().unwrap(), Duration::new(interval, 0)));
     }
-    if args.generated.is_some() {
-        return Ok(Mode::GENERATED(args.generated.clone().unwrap()));
+    if args.generated {
+        let prompt = build_enriched_prompt(&args.prompt);
+        return Ok(Mode::GENERATED(prompt));
     }
     Err("no mode found".to_string())
 }

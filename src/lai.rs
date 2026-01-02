@@ -13,7 +13,7 @@ pub fn generate_local(prompt: &str, output_path: &str) -> Result<()> {
         .arg("--prompt")
         .arg(prompt)
         .arg("--sd-version").arg("v1-5")
-        .arg("--n-steps").arg("1")
+        .arg("--n-steps").arg("100")
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
